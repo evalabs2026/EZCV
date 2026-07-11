@@ -16,7 +16,7 @@ import pickle
 from gui.single_analysis_tab import SingleAnalysisTab
 from gui.scan_series_panel import ScanSeriesPanel
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "1.0.0"
 
 
 class FindDialog(QDialog):
@@ -277,7 +277,8 @@ class MainWindow(QMainWindow):
             f"An open-source tool for importing, plotting, and analyzing "
             f"cyclic voltammetry data, including multi-scan-rate kinetics "
             f"analysis (Dunn's b-value, Trasatti).<br><br>"
-            f"Licensed under the GNU General Public License v3.0."
+            f"Licensed under the GNU General Public License v3.0..<br><br>"
+            f"contact; evalabs2026@gmail.com"
         )
 
     def _save_project(self):

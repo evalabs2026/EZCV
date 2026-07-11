@@ -6,11 +6,11 @@ calculate, and results. Lives as one persistent tab so its state (loaded
 file, segment selection, results) never disappears when switching to the
 scan-rate series tab.
 """
-
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox,
     QGroupBox, QFormLayout, QLineEdit, QDialog, QDialogButtonBox,
-    QMessageBox, QTextEdit, QFileDialog
+    QMessageBox, QTextEdit, QFileDialog,
+    QComboBox
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
@@ -116,7 +116,8 @@ class SingleAnalysisTab(QWidget):
         self.cv_data = None
         self.sample_info = {}
         self.results = {}
-        self.segment_checkboxes = {}
+        self.start_segment_combo = None
+        self.end_segment_combo = None
         self._last_imported_filename = None
 
         main_layout = QHBoxLayout(self)
@@ -133,9 +134,29 @@ class SingleAnalysisTab(QWidget):
         self._show_empty_placeholder()
 
         self.segment_box = QGroupBox("Segments")
-        self.segment_layout = QHBoxLayout()
-        self.segment_box.setLayout(self.segment_layout)
+
+        segment_layout = QHBoxLayout()
+
+        segment_layout.addWidget(QLabel("Start Segment"))
+
+        self.start_segment_combo = QComboBox()
+        self.start_segment_combo.currentIndexChanged.connect(self._plot)
+        segment_layout.addWidget(self.start_segment_combo)
+
+        segment_layout.addSpacing(15)
+
+        segment_layout.addWidget(QLabel("End Segment"))
+
+        self.end_segment_combo = QComboBox()
+        self.end_segment_combo.currentIndexChanged.connect(self._plot)
+        segment_layout.addWidget(self.end_segment_combo)
+
+        segment_layout.addStretch()
+
+        self.segment_box.setLayout(segment_layout)
         left_panel.addWidget(self.segment_box)
+
+        
 
         main_layout.addLayout(left_panel, stretch=3)
 
@@ -203,21 +224,42 @@ class SingleAnalysisTab(QWidget):
             self._plot()
 
     def _build_segment_checkboxes(self):
-        for cb in self.segment_checkboxes.values():
-            cb.setParent(None)
-        self.segment_checkboxes = {}
+        self.start_segment_combo.blockSignals(True)
+        self.end_segment_combo.blockSignals(True)
+
+        self.start_segment_combo.clear()
+        self.end_segment_combo.clear()
 
         segments = sorted(self.cv_data.df["segment"].unique())
+
         for seg in segments:
-            cb = QCheckBox(f"Segment {seg}")
-            cb.setChecked(True)
-            cb.stateChanged.connect(self._plot)
-            self.segment_layout.addWidget(cb)
-            self.segment_checkboxes[seg] = cb
+            self.start_segment_combo.addItem(str(seg), seg)
+            self.end_segment_combo.addItem(str(seg), seg)
+
+        if len(segments) >= 2:
+            self.start_segment_combo.setCurrentIndex(len(segments) - 2)
+            self.end_segment_combo.setCurrentIndex(len(segments) - 1)
+        elif len(segments) == 1:
+            self.start_segment_combo.setCurrentIndex(0)
+            self.end_segment_combo.setCurrentIndex(0)
+
+        self.start_segment_combo.blockSignals(False)
+        self.end_segment_combo.blockSignals(False)
 
     def _selected_segments_df(self):
-        selected = [seg for seg, cb in self.segment_checkboxes.items() if cb.isChecked()]
-        return self.cv_data.df[self.cv_data.df["segment"].isin(selected)]
+        start_seg = self.start_segment_combo.currentData()
+        end_seg = self.end_segment_combo.currentData()
+
+        if start_seg is None or end_seg is None:
+            return self.cv_data.df.iloc[0:0]
+
+        if start_seg > end_seg:
+            start_seg, end_seg = end_seg, start_seg
+
+        return self.cv_data.df[
+        (self.cv_data.df["segment"] >= start_seg) &
+        (self.cv_data.df["segment"] <= end_seg)
+    ]
 
     def _plot(self):
         if self.cv_data is None:
@@ -285,8 +327,7 @@ class SingleAnalysisTab(QWidget):
                 peak_result = peaks.analyze_peaks(df)
                 if not peak_result.peaks_detected:
                     self.results["Peak analysis"] = (
-                        "No distinct redox peak detected - this curve may be "
-                        "capacitive/EDLC-like rather than showing sharp faradaic peaks."
+                        "No distinct redox peak detected "
                     )
                 else:
                     if "epa" in selected:
@@ -339,9 +380,8 @@ class SingleAnalysisTab(QWidget):
         self.cv_data = None
         self.sample_info = {}
         self.results = {}
-        for cb in self.segment_checkboxes.values():
-            cb.setParent(None)
-        self.segment_checkboxes = {}
+        self.start_segment_combo.clear()
+        self.end_segment_combo.clear()
         self.sample_info_btn.setEnabled(False)
         self.calculate_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
@@ -375,7 +415,13 @@ class SingleAnalysisTab(QWidget):
                 "high_e": getattr(meta, "high_e", None),
                 "low_e": getattr(meta, "low_e", None),
             }
-            selected_segments = sorted(seg for seg, cb in self.segment_checkboxes.items() if cb.isChecked())
+            selected_segments = list(
+            range(
+                self.start_segment_combo.currentData(),
+                self.end_segment_combo.currentData() + 1
+                 )
+            )
+
             filename = getattr(self, "_last_imported_filename", "CV data file")
 
             single_report.build_single_report(
@@ -395,7 +441,10 @@ class SingleAnalysisTab(QWidget):
     # --- Save/load project support ---
 
     def get_state(self):
-        selected_segments = [seg for seg, cb in self.segment_checkboxes.items() if cb.isChecked()]
+        selected_segments = [
+            self.start_segment_combo.currentData(),
+            self.end_segment_combo.currentData(),
+            ]
         return {
             "cv_data": self.cv_data,
             "selected_segments": selected_segments,
@@ -412,11 +461,20 @@ class SingleAnalysisTab(QWidget):
             self.sample_info_btn.setEnabled(True)
             self.calculate_btn.setEnabled(True)
             self._build_segment_checkboxes()
-            restored = set(state.get("selected_segments", []))
-            if restored:
-                for seg, cb in self.segment_checkboxes.items():
-                    cb.setChecked(seg in restored)
-            self._plot()
+            selected_segments = state.get("selected_segments", [])
+
+            if selected_segments:
+                start_seg = min(selected_segments)
+                end_seg = max(selected_segments)
+
+                start_index = self.start_segment_combo.findData(start_seg)
+                end_index = self.end_segment_combo.findData(end_seg)
+
+            if start_index != -1:
+                self.start_segment_combo.setCurrentIndex(start_index)
+
+            if end_index != -1:
+                self.end_segment_combo.setCurrentIndex(end_index)
 
         self._render_results()
         self.export_btn.setEnabled(bool(self.results))
